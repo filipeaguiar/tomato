@@ -2,7 +2,7 @@
   "name": "Pomodoro Timer PWA",
   "short_name": "Pomodoro",
   "description": "Um simples timer Pomodoro PWA com fundo preto.",
-  "start_url": "/",
+  "start_url": "/tomato",
   "display": "standalone",
   "background_color": "#000000",
   "theme_color": "#000000",
