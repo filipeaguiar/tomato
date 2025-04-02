@@ -12,7 +12,6 @@
   <style>
     /* Fontes do Google */
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100;200;300;400&display=swap');
-    /* Adicionando a fonte Oswald (Light 300, Regular 400) */
     @import url('https://fonts.googleapis.com/css2?family=Oswald:wght@300;400&display=swap');
 
     /* Basic Styles */
@@ -21,9 +20,9 @@
       /* Fonte padrão para UI */
       overscroll-behavior: none;
       background-color: #000000;
-      /* Garante fundo preto */
       color: #ffffff;
-      /* Garante texto branco */
+      /* Smooth transition for body class changes */
+      transition: background-color 0.3s ease;
     }
 
     .timer-display {
@@ -37,30 +36,32 @@
       /* Ajuste de linha para fonte alta */
       letter-spacing: -0.02em;
       /* Leve ajuste de espaçamento se necessário */
+      /* Garante que os números tenham largura fixa */
       font-variant-numeric: tabular-nums;
+      /* Smooth transition for color change */
+      transition: color 0.5s ease;
     }
 
-    /* Ensure modal is centered and has backdrop */
     dialog::backdrop {
       background-color: rgba(0, 0, 0, 0.5);
       backdrop-filter: blur(4px);
     }
 
-    /* Style buttons */
     .control-button {
       background-color: #1f2937;
       /* bg-neutral-800 */
       color: white;
       padding: 1rem;
-      /* p-4 */
       border-radius: 9999px;
-      /* rounded-full */
-      transition: background-color 0.2s ease-in-out;
+      /* Smooth transition for background */
+      transition: background-color 0.3s ease-in-out, border 0.3s ease-in-out;
       display: inline-flex;
       align-items: center;
       justify-content: center;
       width: 56px;
       height: 56px;
+      border: 2px solid transparent;
+      /* Add transparent border for spacing consistency */
     }
 
     .control-button:hover {
@@ -68,25 +69,54 @@
       /* hover:bg-neutral-700 */
     }
 
-    /* Style for SVG icons within buttons */
     .control-button svg {
       width: 1.5rem;
-      /* 24px */
       height: 1.5rem;
-      /* 24px */
       stroke: currentColor;
+      transition: opacity 0.3s ease;
+      /* Add transition to icon opacity */
     }
 
-    /* Utility class to hide elements */
     .hidden {
       display: none;
     }
 
-    /* Estilos para elementos de texto restantes */
     #phase-indicator,
     #cycle-indicator {
       font-family: 'Inter', sans-serif;
-      /* Manter Inter para outros textos */
+      /* Smooth transition for opacity/visibility */
+      transition: opacity 0.5s ease;
+      opacity: 1;
+      /* Ensure it starts visible */
+    }
+
+    /* --- Minimal Mode Styles --- */
+    body.minimal-mode #phase-indicator,
+    body.minimal-mode #cycle-indicator {
+      opacity: 0;
+      pointer-events: none;
+      /* Prevent interaction when hidden */
+    }
+
+    body.minimal-mode #timer-display {
+      color: #4a5568;
+      /* Tailwind gray-600 - Cinza escuro */
+    }
+
+    body.minimal-mode .control-button {
+      background-color: transparent;
+      border-color: transparent;
+    }
+
+    /* Optional: Slightly dim icons in minimal mode */
+    body.minimal-mode .control-button svg {
+      opacity: 0.8;
+    }
+
+    /* Ensure hover effect still works minimally */
+    body.minimal-mode .control-button:hover {
+      background-color: rgba(255, 255, 255, 0.1);
+      /* Subtle hover */
     }
   </style>
 </head>
@@ -112,8 +142,8 @@
           <rect x="6" y="4" width="4" height="16" rx="1" />
         </svg>
       </button>
-      <button id="stop-button" title="Parar e Reiniciar Ciclo" class="control-button"> <svg
-          xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
+      <button id="stop-button" title="Parar e Reiniciar Ciclo" class="control-button">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none"
           stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <rect width="18" height="18" x="3" y="3" rx="2" />
         </svg>
@@ -192,6 +222,7 @@
     const shortBreakDurationInput = document.getElementById('short-break-duration');
     const longBreakDurationInput = document.getElementById('long-break-duration');
     const cyclesBeforeLongBreakInput = document.getElementById('cycles-before-long-break');
+    const bodyElement = document.body; // Referência ao body
 
     // --- State Variables ---
     let timerInterval = null;
@@ -199,7 +230,9 @@
     let timeLeft = 0;
     let currentPhase = 'work';
     let currentCycle = 1;
-    let wakeLockSentinel = null;
+    let wakeLockSentinel = null; // Variável para guardar o objeto WakeLock
+    let inactivityTimeoutId = null; // ID do timeout de inatividade
+    const INACTIVITY_TIMEOUT_DURATION = 60 * 1000; // 1 minuto em milissegundos
 
     // --- Settings ---
     let settings = {
@@ -212,14 +245,11 @@
     // --- Sound Synthesizer ---
     let synth = null;
     const initializeAudio = async () => {
-      if (typeof Tone === 'undefined' || !Tone || !Tone.Synth) {
-        console.warn('Tone.js not loaded, sound disabled.'); return;
-      }
+      if (typeof Tone === 'undefined' || !Tone || !Tone.Synth) {console.warn('Tone.js not loaded, sound disabled.'); return;}
       if (!synth) {
         try {
           await Tone.start();
-          synth = new Tone.Synth().toDestination();
-          console.log("Audio context started.");
+          synth = new Tone.Synth().toDestination(); console.log("Audio context started.");
         } catch (e) {console.error("Error starting audio context:", e);}
       }
     };
@@ -230,25 +260,37 @@
         try {
           if (!wakeLockSentinel || wakeLockSentinel.released) {
             wakeLockSentinel = await navigator.wakeLock.request('screen');
-            wakeLockSentinel.addEventListener('release', () => {
-              console.log('Screen Wake Lock foi liberado.');
-            });
+            wakeLockSentinel.addEventListener('release', () => {console.log('Screen Wake Lock foi liberado.');});
             console.log('Screen Wake Lock ativado.');
           }
-        } catch (err) {
-          console.error(`Falha ao obter Screen Wake Lock: ${err.name}, ${err.message}`);
-          wakeLockSentinel = null;
-        }
+        } catch (err) {console.error(`Falha ao obter Screen Wake Lock: ${err.name}, ${err.message}`); wakeLockSentinel = null;}
       } else {console.warn('Screen Wake Lock API não suportada.');}
     };
     const releaseWakeLock = async () => {
       if (wakeLockSentinel && !wakeLockSentinel.released) {
-        try {
-          await wakeLockSentinel.release();
-          console.log('Screen Wake Lock liberado.');
-        } catch (err) {console.error(`Falha ao liberar Screen Wake Lock: ${err.name}, ${err.message}`);}
+        try {await wakeLockSentinel.release(); console.log('Screen Wake Lock liberado.');}
+        catch (err) {console.error(`Falha ao liberar Screen Wake Lock: ${err.name}, ${err.message}`);}
         finally {wakeLockSentinel = null;}
       }
+    };
+
+    // --- Minimal Mode Functions ---
+    const activateMinimalMode = () => {
+      if (!bodyElement.classList.contains('minimal-mode')) {
+        bodyElement.classList.add('minimal-mode');
+        console.log("Modo minimalista ativado.");
+      }
+    };
+    const deactivateMinimalMode = () => {
+      if (bodyElement.classList.contains('minimal-mode')) {
+        bodyElement.classList.remove('minimal-mode');
+        console.log("Modo minimalista desativado.");
+      }
+    };
+    const resetInactivityTimer = () => {
+      deactivateMinimalMode(); // Sempre desativa ao resetar
+      clearTimeout(inactivityTimeoutId); // Limpa o timeout anterior
+      inactivityTimeoutId = setTimeout(activateMinimalMode, INACTIVITY_TIMEOUT_DURATION); // Inicia novo timeout
     };
 
     // --- Core Timer Functions ---
@@ -272,7 +314,6 @@
       longBreakDurationInput.value = settings.longBreakDuration / 60;
       cyclesBeforeLongBreakInput.value = settings.cyclesBeforeLongBreak;
     }
-
     function saveSettings() {
       const workMins = parseInt(workDurationInput.value);
       const shortMins = parseInt(shortBreakDurationInput.value);
@@ -289,16 +330,15 @@
       settings.cyclesBeforeLongBreak = cycles;
       localStorage.setItem('pomodoroSettings', JSON.stringify(settings));
       console.log("Settings saved:", settings);
-      resetTimer();
+      resetTimer(); // Reseta timer principal
+      resetInactivityTimer(); // Reseta timer de inatividade também
       return true;
     }
-
     function formatTime(seconds) {
       const minutes = Math.floor(seconds / 60);
       const remainingSeconds = seconds % 60;
       return `${String(minutes).padStart(2, '0')}:${String(remainingSeconds).padStart(2, '0')}`;
     }
-
     function updateDisplay() {
       timerDisplay.textContent = formatTime(timeLeft);
       const phaseName = getPhaseName();
@@ -306,10 +346,20 @@
       phaseIndicator.textContent = phaseName;
       if (currentPhase === 'work') {
         cycleIndicator.textContent = `Ciclo ${currentCycle} / ${settings.cyclesBeforeLongBreak}`;
-        cycleIndicator.classList.remove('invisible');
+        // A visibilidade do cycleIndicator agora é controlada pela classe .minimal-mode e opacity
+        // cycleIndicator.classList.remove('invisible');
       } else {
-        cycleIndicator.classList.add('invisible');
+        // A visibilidade do cycleIndicator agora é controlada pela classe .minimal-mode e opacity
+        // cycleIndicator.classList.add('invisible');
+        // Garante que o cycleIndicator não seja exibido durante intervalos, mesmo fora do modo minimalista
+        cycleIndicator.style.opacity = '0'; // Ou use uma classe específica para esconder em intervalos
       }
+      // Se for trabalho, garante que esteja visível (se não estiver em modo minimalista)
+      if (currentPhase === 'work') {
+        cycleIndicator.style.opacity = '1';
+      }
+
+
       if (isRunning) {
         playIcon.classList.add('hidden'); pauseIcon.classList.remove('hidden');
         startPauseButton.title = 'Pausar';
@@ -318,7 +368,6 @@
         startPauseButton.title = 'Iniciar';
       }
     }
-
     function getPhaseName() {
       switch (currentPhase) {
         case 'work': return 'Trabalho';
@@ -327,14 +376,12 @@
         default: return '';
       }
     }
-
     function playNotificationSound() {
       if (synth) {
         try {synth.triggerAttackRelease("C5", "8n", Tone.now());}
         catch (e) {console.error("Error playing sound:", e);}
       } else {console.warn("Audio context not initialized.");}
     }
-
     function nextPhase() {
       playNotificationSound();
       let previousPhase = currentPhase;
@@ -351,7 +398,6 @@
       }
       resetTimerState();
     }
-
     function startTimer() {
       if (isRunning) return;
       initializeAudio().then(() => {
@@ -366,6 +412,7 @@
         }
         updateDisplay();
         requestWakeLock();
+        resetInactivityTimer(); // Reseta inatividade ao iniciar
         if (timerInterval) clearInterval(timerInterval);
         timerInterval = setInterval(() => {
           if (timeLeft <= 0) {
@@ -380,61 +427,69 @@
         }, 1000);
       }).catch(e => console.error("Could not start timer:", e));
     }
-
     function pauseTimer() {
       if (!isRunning) return;
       isRunning = false;
       clearInterval(timerInterval); timerInterval = null;
       releaseWakeLock();
       updateDisplay();
+      resetInactivityTimer(); // Reseta inatividade ao pausar
     }
-
-    // MODIFICADO: stopTimer agora reinicia completamente o ciclo.
     function stopTimer() {
       console.log("Stop button pressed - Resetting timer completely.");
-      resetTimer(); // Chama a função que já faz o reset completo
+      resetTimer();
+      resetInactivityTimer(); // Reseta inatividade ao parar
     }
-
-    // Função que reinicia completamente o timer para o estado inicial
     function resetTimer() {
-      pauseTimer(); // Garante que o timer está parado e o lock liberado
+      pauseTimer();
       currentPhase = 'work';
       currentCycle = 1;
       timeLeft = settings.workDuration;
-      updateDisplay(); // Atualiza a interface para o estado inicial
+      updateDisplay();
       console.log("Timer reset to initial state.");
     }
-
-    // Reseta apenas o estado do timer (pausa), mantém fase/ciclo/tempo
     function resetTimerState() {
       pauseTimer();
       updateDisplay();
     }
-
     function skipPhase() {
       pauseTimer();
       nextPhase();
       updateDisplay();
+      resetInactivityTimer(); // Reseta inatividade ao pular
     }
 
     // --- Event Listeners ---
     startPauseButton.addEventListener('click', () => {
+      resetInactivityTimer();
       if (isRunning) pauseTimer(); else startTimer();
     });
-    stopButton.addEventListener('click', stopTimer); // Listener continua o mesmo, mas a função mudou
-    skipButton.addEventListener('click', skipPhase);
+    stopButton.addEventListener('click', () => {
+      resetInactivityTimer();
+      stopTimer();
+    });
+    skipButton.addEventListener('click', () => {
+      resetInactivityTimer();
+      skipPhase();
+    });
     settingsButton.addEventListener('click', () => {
+      resetInactivityTimer();
       loadSettings(); settingsModal.showModal();
     });
-    closeSettingsButton.addEventListener('click', () => settingsModal.close());
+    closeSettingsButton.addEventListener('click', () => {
+      resetInactivityTimer();
+      settingsModal.close();
+    });
     settingsModal.addEventListener('click', (event) => {
       const rect = settingsModal.getBoundingClientRect();
       if (event.clientY < rect.top || event.clientY > rect.bottom || event.clientX < rect.left || event.clientX > rect.right) {
+        resetInactivityTimer();
         settingsModal.close();
       }
     });
     settingsForm.addEventListener('submit', (event) => {
       event.preventDefault();
+      resetInactivityTimer();
       if (saveSettings()) settingsModal.close();
     });
 
@@ -442,6 +497,7 @@
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible' && isRunning) {
         requestWakeLock();
+        resetInactivityTimer(); // Reseta inatividade ao voltar pra aba
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -451,11 +507,12 @@
     loadSettings();
     timeLeft = settings.workDuration;
     updateDisplay();
+    resetInactivityTimer(); // Inicia o timer de inatividade na carga da página
 
     // --- Service Worker Registration ---
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/service-worker.js')
+        navigator.serviceWorker.register('/service-worker.js') // Verifique se este caminho está correto
           .then(reg => console.log('SW registered.', reg.scope))
           .catch(err => console.log('SW registration failed:', err));
       });
